@@ -131,10 +131,13 @@ describe('Installer targets — contract', () => {
             // Seed pre-existing config.
             fs.mkdirSync(path.dirname(jsonPath), { recursive: true });
             const seed: Record<string, any> = { mcpServers: { other: { command: 'x' } } };
-            // opencode uses `mcp` not `mcpServers`. Match its shape too.
+            // opencode and jcode use wrappers that differ from `mcpServers`.
             if (target.id === 'opencode') {
               delete seed.mcpServers;
               seed.mcp = { other: { type: 'local', command: ['x'], enabled: true } };
+            } else if (target.id === 'jcode') {
+              delete seed.mcpServers;
+              seed.servers = { other: { command: 'x', args: [], env: {}, shared: true } };
             }
             fs.writeFileSync(jsonPath, JSON.stringify(seed, null, 2) + '\n');
 
@@ -144,6 +147,9 @@ describe('Installer targets — contract', () => {
             if (target.id === 'opencode') {
               expect(after.mcp.other).toBeDefined();
               expect(after.mcp.codegraph).toBeDefined();
+            } else if (target.id === 'jcode') {
+              expect(after.servers.other).toBeDefined();
+              expect(after.servers.codegraph).toBeDefined();
             } else {
               expect(after.mcpServers.other).toBeDefined();
               expect(after.mcpServers.codegraph).toBeDefined();
@@ -404,6 +410,56 @@ describe('Installer targets — partial-state idempotency', () => {
     expect(body).toContain('# My personal Gemini context');
     expect(body).toContain('Always respond concisely.');
     expect(body).not.toContain('CODEGRAPH_START');
+  });
+
+  it('jcode: install writes ~/.jcode/mcp.json using servers.codegraph with shared stdio MCP config', () => {
+    const jcode = getTarget('jcode')!;
+    const result = jcode.install('global', { autoAllow: true });
+    const mcp = path.join(tmpHome, '.jcode', 'mcp.json');
+
+    expect(result.files.map((f) => ({ path: f.path.replace(/\\/g, '/'), action: f.action }))).toEqual([
+      { path: mcp.replace(/\\/g, '/'), action: 'created' },
+    ]);
+    const cfg = JSON.parse(fs.readFileSync(mcp, 'utf-8'));
+    expect(cfg.servers.codegraph).toEqual({
+      command: 'codegraph',
+      args: ['serve', '--mcp'],
+      env: {},
+      shared: true,
+    });
+  });
+
+  it('jcode: local install writes ./.jcode/mcp.json and preserves sibling servers', () => {
+    const jcode = getTarget('jcode')!;
+    const mcp = path.join(tmpCwd, '.jcode', 'mcp.json');
+    fs.mkdirSync(path.dirname(mcp), { recursive: true });
+    fs.writeFileSync(mcp, JSON.stringify({
+      servers: { filesystem: { command: '/bin/fs', args: ['--root', tmpCwd], env: {}, shared: true } },
+    }, null, 2) + '\n');
+
+    const result = jcode.install('local', { autoAllow: true });
+
+    expect(result.files[0].path.replace(/\\/g, '/')).toMatch(/\/\.jcode\/mcp\.json$/);
+    expect(result.files[0].action).toBe('updated');
+    const cfg = JSON.parse(fs.readFileSync(mcp, 'utf-8'));
+    expect(cfg.servers.filesystem).toEqual({ command: '/bin/fs', args: ['--root', tmpCwd], env: {}, shared: true });
+    expect(cfg.servers.codegraph).toEqual({ command: 'codegraph', args: ['serve', '--mcp'], env: {}, shared: true });
+  });
+
+  it('jcode: uninstall strips only servers.codegraph and leaves sibling servers intact', () => {
+    const jcode = getTarget('jcode')!;
+    const mcp = path.join(tmpHome, '.jcode', 'mcp.json');
+    fs.mkdirSync(path.dirname(mcp), { recursive: true });
+    fs.writeFileSync(mcp, JSON.stringify({
+      servers: { filesystem: { command: '/bin/fs', args: [], env: {}, shared: true } },
+    }, null, 2) + '\n');
+
+    jcode.install('global', { autoAllow: true });
+    jcode.uninstall('global');
+
+    const cfg = JSON.parse(fs.readFileSync(mcp, 'utf-8'));
+    expect(cfg.servers.filesystem).toEqual({ command: '/bin/fs', args: [], env: {}, shared: true });
+    expect(cfg.servers.codegraph).toBeUndefined();
   });
 
   it('kiro: install writes settings/mcp.json (mcpServers.codegraph) and no steering doc (#529)', () => {
