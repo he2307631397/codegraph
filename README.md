@@ -339,6 +339,8 @@ Builds the per-project knowledge graph index. A single global `codegraph install
 
 That's it — your agent will use CodeGraph tools automatically when a `.codegraph/` directory exists.
 
+For the full day-to-day workflow, including why each repository needs its own `.codegraph/` index, see [docs/usage.md](docs/usage.md).
+
 <details>
 <summary><strong>Manual Setup (Alternative)</strong></summary>
 
